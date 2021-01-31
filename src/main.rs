@@ -9,9 +9,14 @@ use defmt_rtt as _;
 use pac::{watchdog, xosc};
 use panic_probe as _;
 use rp2040_pac as pac;
+use rp2040_pac::io_bank0::gpio0_ctrl::FUNCSEL_A;
+use core::borrow::{BorrowMut, Borrow};
+use rp2040_pac::pads_bank0::RegisterBlock;
+use core::ops::Deref;
 
 mod pll;
 mod resets;
+mod i2c;
 
 #[link_section = ".boot2"]
 #[used]
@@ -94,6 +99,88 @@ fn main() -> ! {
 
     init(p.RESETS, p.WATCHDOG, p.CLOCKS, p.XOSC, p.PLL_SYS, p.PLL_USB);
 
+    // i2c crap, TODO: generalize and extract to HAL
+    // Pads should be configured for
+    //  pull-up enabled
+    //  slew rate limited
+    //  schmitt trigger enabled
+    p.PADS_BANK0.gpio16.write(|w| {
+        w.schmitt().bit(true);
+        w.pue().bit(true);
+        w.slewfast().bit(false);
+        w
+    });
+    p.PADS_BANK0.gpio17.write(|w| {
+        w.schmitt().bit(true);
+        w.pue().bit(true);
+        w.slewfast().bit(false);
+        w
+    });
+    // Select gpio i2c fn
+    p.IO_BANK0.gpio17_ctrl.write(|w| {
+        w.funcsel().i2c0_scl(); // Set this pin to SCL
+        w
+    });
+    p.IO_BANK0.gpio16_ctrl.write(|w| {
+        w.funcsel().i2c0_sda(); // Set this pin to SDA
+        w
+    });
+    // Enable i2c
+    p.I2C0.ic_enable.write(|w| {
+        w.enable().bit(true); // Enable the i2c peripheral
+        w
+    });
+    // Set i2c master, speed, and addressing mode
+    let master = true;
+    let ten_bit_addressing = false;
+    p.I2C0.ic_con.write(|w| {
+        // Bits 0 and 6 should always be set the same.
+        w.master_mode().bit(master);      // Bit 0. Enable master mode.
+        w.ic_slave_disable().bit(master); // Bit 6. Disable slave mode.
+        w.ic_10bitaddr_master().bit(ten_bit_addressing);
+        w.speed().standard();
+        w
+    });
+    // 7-bit target addressing. Set target addr to 0x110_1000_1 <- one at end for read
+    // CPU only needs to write here to initiate an i2c bus exchange.
+    p.I2C0.ic_tar.write(|w| unsafe {
+        w.bits(0x110_1000_1);
+        w
+    });
+    // Read ACK
+    let noack = p.I2C0.ic_tx_abrt_source.read().abrt_7b_addr_noack().bit();
+    if !noack {
+        info!("Acknoledge!");
+        for x in 0..10 { // flash rapidly if we are connected
+            cortex_m::asm::delay(100_000);
+            p.IO_BANK0.gpio25_ctrl.write(|w| {
+                w.oeover().enable();
+                w.outover().high();
+                w
+            });
+            cortex_m::asm::delay(100_000);
+            p.IO_BANK0.gpio25_ctrl.write(|w| {
+                w.oeover().enable();
+                w.outover().low();
+                w
+            });
+        }
+    } else {
+        info!("NoAck!");
+        p.IO_BANK0.gpio25_ctrl.write(|w| {
+            w.oeover().enable();
+            w.outover().high();
+            w
+        });
+        cortex_m::asm::delay(1_000_000);
+        p.IO_BANK0.gpio25_ctrl.write(|w| {
+            w.oeover().enable();
+            w.outover().low();
+            w
+        });
+    }
+
+    cortex_m::asm::delay(5_000_000);
     loop {
         info!("on!");
         p.IO_BANK0.gpio25_ctrl.write(|w| {
