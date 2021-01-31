@@ -15,34 +15,37 @@ impl<T: Instance> PLL<T> {
     }
 
     pub fn configure(&mut self, refdiv: u32, vco_freq: u32, post_div1: u8, post_div2: u8) {
-        let p = &self.inner;
+        unsafe {
+            let p = self.inner.regs();
+            // Power off in case it's already running
+            p.pwr().reset();
+            p.fbdiv_int().reset();
 
-        // Power off in case it's already running
-        p.pwr.reset();
-        p.fbdiv_int.reset();
+            let ref_mhz = XOSC_MHZ / refdiv;
+            p.cs().write(|w| unsafe { w.set_refdiv(ref_mhz as _) });
 
-        let ref_mhz = XOSC_MHZ / refdiv;
-        p.cs.write(|w| unsafe { w.bits(ref_mhz as _) });
+            let fbdiv = vco_freq / (ref_mhz * 1_000_000);
+            assert!(fbdiv >= 16 && fbdiv <= 520);
+            assert!((post_div1 >= 1 && post_div1 <= 7) && (post_div2 >= 1 && post_div2 <= 7));
+            assert!(post_div2 <= post_div1);
+            assert!(ref_mhz <= (vco_freq / 16));
 
-        let fbdiv = vco_freq / (ref_mhz * 1_000_000);
-        assert!(fbdiv >= 16 && fbdiv <= 520);
-        assert!((post_div1 >= 1 && post_div1 <= 7) && (post_div2 >= 1 && post_div2 <= 7));
-        assert!(post_div2 <= post_div1);
-        assert!(ref_mhz <= (vco_freq / 16));
+            p.fbdiv_int().write(|w| w.set_fbdiv_int(fbdiv as _));
 
-        p.fbdiv_int.write(|w| unsafe { w.bits(fbdiv) });
+            p.pwr().modify(|w| {
+                w.set_pd(false);
+                w.set_vcopd(false);
+            });
 
-        p.pwr.modify(|_, w| w.pd().clear_bit().vcopd().clear_bit());
+            while !p.cs().read().lock() {}
 
-        while !p.cs.read().lock().bits() {}
+            p.prim().write(|w| {
+                w.set_postdiv1(post_div1);
+                w.set_postdiv2(post_div2);
+            });
 
-        p.prim.write(|w| unsafe {
-            w.postdiv1().bits(post_div1);
-            w.postdiv2().bits(post_div2);
-            w
-        });
-
-        p.pwr.modify(|_, w| w.postdivpd().clear_bit());
+            p.pwr().modify(|w| w.set_postdivpd(false));
+        }
     }
 }
 
@@ -50,10 +53,24 @@ mod sealed {
     use rp2040_pac as pac;
 
     pub trait Instance {}
-    impl Instance for pac::PLL_SYS {}
-    impl Instance for pac::PLL_USB {}
+    impl Instance for super::PllSys {}
+    impl Instance for super::PllUsb {}
 }
 
-pub trait Instance: Deref<Target = pac::pll_sys::RegisterBlock> {}
-impl Instance for pac::PLL_SYS {}
-impl Instance for pac::PLL_USB {}
+// todo make owned
+pub struct PllSys;
+pub struct PllUsb;
+
+pub trait Instance {
+    fn regs(&self) -> pac::pll_sys::PllSys;
+}
+impl Instance for PllSys {
+    fn regs(&self) -> pac::pll_sys::PllSys {
+        pac::PLL_SYS
+    }
+}
+impl Instance for PllUsb {
+    fn regs(&self) -> pac::pll_sys::PllSys {
+        pac::PLL_USB
+    }
+}
