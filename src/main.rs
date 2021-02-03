@@ -16,7 +16,6 @@ use core::ops::Deref;
 
 mod pll;
 mod resets;
-mod i2c;
 
 #[link_section = ".boot2"]
 #[used]
