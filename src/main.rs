@@ -12,6 +12,7 @@ use rp2040_pac as pac;
 
 mod pll;
 mod resets;
+mod uart;
 
 #[link_section = ".boot2"]
 #[used]
@@ -25,6 +26,16 @@ fn timestamp() -> u64 {
     COUNT.store(n + 1, Ordering::Relaxed);
     n as u64
 }
+
+static GREETING: &str = "\n\r/ Hello fellow rustaceans! Now I talk to \\\r
+\\ you from a Raspberry Pico board!       /\r
+ -----------------------------------------\r
+        \\\r
+         \\\r
+            _~^~^~_\r
+        \\) /  o o  \\ (/\r
+          '_   -   _'\r
+          / '-----' \\\n\n\n\n\r";
 
 fn init(
     resets: pac::RESETS,
@@ -52,7 +63,8 @@ fn init(
                 | resets::SPI1
                 | resets::UART0
                 | resets::UART1
-                | resets::USBCTRL),
+                | resets::USBCTRL
+                | resets::IO_BANK0),
     );
 
     // xosc 12 mhz
@@ -84,6 +96,28 @@ fn init(
 
     pll::PLL::new(pll_sys).configure(1, 1500_000_000, 6, 2);
     pll::PLL::new(pll_usb).configure(1, 480_000_000, 5, 2);
+
+    // Activate peripheral clock and take external oscillator as input
+    clocks.clk_peri_ctrl.write(|w| {
+        w.enable().set_bit();
+        w.auxsrc().xosc_clksrc();
+        w
+    });
+}
+
+fn uart_configure_alternate_functions(p: &pac::IO_BANK0) {
+    // todo funcsel in pac not implemented for generic access to gpio
+    // for UART, the funcsel is 2 for all pins, so calling uart0_tx
+    // on each gp does the trick but is very confusing
+
+    // set GP0 to UART0_TX
+    p.gpio[0].gpio_ctrl.write(|w| w.funcsel().uart0_tx());
+    // set GP1 to UART0_RX
+    p.gpio[1].gpio_ctrl.write(|w| w.funcsel().uart0_tx());
+    // set GP4 to UART1_TX
+    p.gpio[4].gpio_ctrl.write(|w| w.funcsel().uart0_tx());
+    // set GP5 to UART1_RX
+    p.gpio[5].gpio_ctrl.write(|w| w.funcsel().uart0_tx());
 }
 
 #[entry]
@@ -93,6 +127,17 @@ fn main() -> ! {
     let p = pac::Peripherals::take().unwrap();
 
     init(p.RESETS, p.WATCHDOG, p.CLOCKS, p.XOSC, p.PLL_SYS, p.PLL_USB);
+
+    uart_configure_alternate_functions(&p.IO_BANK0);
+    // Peripheral clock is attached to XOSC
+    const PERI_CLK: u32 = 12_000_000;
+    let uart0 = uart::UART::new(p.UART0, PERI_CLK);
+    uart0.configure(115200);
+    let uart1 = uart::UART::new(p.UART1, PERI_CLK);
+    uart1.configure(115200);
+
+    uart0.write_blocking(&GREETING.as_bytes());
+    uart1.write_blocking(&GREETING.as_bytes());
 
     let led_pin = 25;
 
