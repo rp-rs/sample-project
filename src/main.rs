@@ -84,6 +84,11 @@ fn init(
 
     pll::PLL::new(pll_sys).configure(1, 1500_000_000, 6, 2);
     pll::PLL::new(pll_usb).configure(1, 480_000_000, 5, 2);
+
+    // Switch clk_sys to pll_sys
+    clocks.clk_sys_ctrl.modify(|_, w| w.auxsrc().clksrc_pll_sys() );
+    clocks.clk_sys_ctrl.modify(|_, w| w.src().clksrc_clk_sys_aux() );
+    while clocks.clk_sys_selected.read().bits() != 2 {}
 }
 
 #[entry]
@@ -95,6 +100,7 @@ fn main() -> ! {
     init(p.RESETS, p.WATCHDOG, p.CLOCKS, p.XOSC, p.PLL_SYS, p.PLL_USB);
 
     let led_pin = 25;
+    let half_cycle = 125000000/2;
 
     loop {
         info!("on!");
@@ -104,7 +110,7 @@ fn main() -> ! {
             w
         });
 
-        cortex_m::asm::delay(1_000_000);
+        cortex_m::asm::delay(half_cycle);
 
         info!("off!");
         p.IO_BANK0.gpio[led_pin].gpio_ctrl.write(|w| {
@@ -113,6 +119,6 @@ fn main() -> ! {
             w
         });
 
-        cortex_m::asm::delay(1_000_000);
+        cortex_m::asm::delay(half_cycle);
     }
 }
