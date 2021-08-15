@@ -1,5 +1,7 @@
 # Raspberry pico RP2040 rust test!
 
+# Notice: this project has been deprecated. Please use https://github.com/rp-rs/rp2040-project-template
+
 ## Requirements
 
 - Recent nightly Rust
