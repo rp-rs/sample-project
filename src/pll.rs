@@ -16,15 +16,13 @@ impl<T: Instance> PLL<T> {
 
     pub fn configure(&mut self, refdiv: u32, vco_freq: u32, post_div1: u8, post_div2: u8) {
         let p = &self.inner;
+        let ref_mhz = XOSC_MHZ / refdiv;
+        let fbdiv = vco_freq / (ref_mhz * 1_000_000);
 
         // Power off in case it's already running
         p.pwr.reset();
         p.fbdiv_int.reset();
 
-        let ref_mhz = XOSC_MHZ / refdiv;
-        p.cs.write(|w| unsafe { w.bits(ref_mhz as _) });
-
-        let fbdiv = vco_freq / (ref_mhz * 1_000_000);
         assert!(fbdiv >= 16 && fbdiv <= 520);
         assert!((post_div1 >= 1 && post_div1 <= 7) && (post_div2 >= 1 && post_div2 <= 7));
         assert!(post_div2 <= post_div1);
